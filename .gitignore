@@ -1,0 +1,14 @@
+# Local API key config (never commit secrets)
+js/config.js
+
+# Generated player stat files (large; regenerate with tools/generate-players.py)
+# Comment the next line out if you want to commit the generated dataset.
+data/players/
+
+__pycache__/
+*.pyc
+.DS_Store
+
+# Generator scratch + logs
+tools/gen.log
+tools/_*.py
