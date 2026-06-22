@@ -62,15 +62,27 @@ python tools/generate-players.py --active-only --insecure
 
 The curated overlay (`data/curated.js`) carries hand-curated fields (legend/HOF flags, accolades, draft, career averages) for marquee players and is merged on top at startup, so regenerating the index never loses it.
 
-### Live API key (optional)
+### Connect live data — no terminal needed
 
-To enable live current-season search/stats, create `js/config.js`:
+For the richest experience, connect the free **balldontlie** API right inside the app:
 
-```js
-window.NBA_CONFIG = { balldontlieKey: "YOUR_FREE_KEY" };
+1. Click **⚡ Connect** (top-right) — or the "Connect data" banner on any player/team page.
+2. Follow the steps in the dialog: create a free account at [app.balldontlie.io](https://app.balldontlie.io/), copy your API key.
+3. Paste it and press **Connect**. The app verifies the key and reloads with live data.
+
+Once connected, every **player profile** gains a *Season explorer*: pick any season to see full season averages **and a game-by-game breakdown** (PTS, REB, AST, STL, BLK, TOV, shooting splits, opponent, W/L), plus a relevance/role summary. The key is stored only in your browser (`localStorage`); the free tier is rate-limited, so data loads one season at a time.
+
+Prefer a config file? Create `js/config.js` with `window.NBA_CONFIG = { balldontlieKey: "YOUR_FREE_KEY" };` and add `<script src="js/config.js"></script>` before the other scripts in `index.html`.
+
+### Team rosters & roles by season
+
+Run this after `generate-players.py` to build the franchise → season → roster index used by the team page (no API, no network):
+
+```bash
+python tools/build-team-seasons.py    # reads data/players/*.json -> data/team-seasons.js
 ```
 
-…and add `<script src="js/config.js"></script>` before the other scripts in `index.html`, **or** click the ⚙ button in the app to paste a key (stored in `localStorage`). Get a free key at balldontlie.io.
+The team page's **time machine** then groups each season's roster into **Key players**, **Supporting cast**, and **Young & growth** (with per-player MPG/PPG/RPG/APG), so it's clear who carried the team and who was developing for the future.
 
 ## Data model
 

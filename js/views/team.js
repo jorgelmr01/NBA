@@ -8,18 +8,87 @@ window.NBA.views.team = (function () {
 
   var state = { team: null, year: null };
 
-  // Players associated with this team who were active in a given year.
-  // Note: the generated index stores a player's current team only, so this is
-  // an approximation (legends carry full multi-team arrays). Capped for size.
-  var ROSTER_CAP = 30;
-  function rosterFor(team, year) {
-    return (NBA.players || []).filter(function (p) {
+  // Accurate roster for a franchise + season, from the generated team-season
+  // index (data/team-seasons.js). Returns an array of per-game-average entries
+  // sorted by minutes, or null if that season isn't in the bundled data.
+  function rosterFromData(team, year) {
+    var byTeam = NBA.teamSeasons && NBA.teamSeasons[String(team.id)];
+    var list = byTeam && byTeam[String(year)];
+    return (list && list.length) ? list.slice() : null;
+  }
+
+  // Classify a roster into clear groups answering "who were the key players,
+  // the supporting cast, and the young players developing for the future?"
+  function classifyRoster(roster) {
+    var groups = { key: [], support: [], growth: [], depth: [] };
+    roster.forEach(function (e) {
+      var mpg = e.min || 0;
+      var young = (e.exp !== undefined && e.exp !== null && e.exp <= 2);
+      if (mpg >= 28) groups.key.push(e);
+      else if (young && mpg >= 8) groups.growth.push(e);
+      else if (mpg >= 12) groups.support.push(e);
+      else groups.depth.push(e);
+    });
+    // Rank within each group by a production-weighted score.
+    Object.keys(groups).forEach(function (k) {
+      groups[k].sort(function (a, b) {
+        return ((b.min || 0) + (b.pts || 0) * 0.6) - ((a.min || 0) + (a.pts || 0) * 0.6);
+      });
+    });
+    return groups;
+  }
+
+  function roleCard(e, badge) {
+    var line = util.num(e.min, 1) + ' MPG \u00B7 ' + util.num(e.pts, 1) + ' PPG \u00B7 ' +
+      util.num(e.reb, 1) + ' RPG \u00B7 ' + util.num(e.ast, 1) + ' APG';
+    return '<a class="role-card" href="#/player/' + e.id + '">' +
+      image.avatarHtml({ id: e.id, name: e.name }, "sm") +
+      '<span class="role-card__body">' +
+      '<span class="role-card__name">' + util.esc(e.name) + (badge || '') + '</span>' +
+      '<span class="role-card__line">' + line + '</span>' +
+      '</span></a>';
+  }
+
+  function roleGroup(title, sub, entries, badgeFn) {
+    if (!entries.length) return "";
+    var cards = entries.map(function (e) { return roleCard(e, badgeFn ? badgeFn(e) : ""); }).join("");
+    return '<div class="role-group">' +
+      '<h5 class="role-group__title">' + util.esc(title) + ' <span class="muted">' + util.esc(sub) + '</span></h5>' +
+      '<div class="role-cards">' + cards + '</div></div>';
+  }
+
+  // Fallback when a season isn't in the bundled data: approximate from the index.
+  function fallbackRosterHtml(team, year) {
+    var roster = (NBA.players || []).filter(function (p) {
       var inSpan = (p.from || 0) <= year && (p.to || 9999) >= year;
-      var onTeam = (p.teams || []).indexOf(team.abbr) >= 0;
-      return inSpan && onTeam;
+      return (p.teams || []).indexOf(team.abbr) >= 0 && inSpan;
     }).sort(function (a, b) {
       return (b.isLegend - a.isLegend) || (b.isHOF - a.isHOF) || a.name.localeCompare(b.name);
-    }).slice(0, ROSTER_CAP);
+    }).slice(0, 24);
+
+    var note = NBA.api.hasLiveApi()
+      ? 'Detailed roster roles for ' + util.seasonLabel(year) + ' aren\u2019t in the bundled snapshot yet.'
+      : 'Connect live data (or generate the full snapshot) for exact rosters and player roles.';
+    if (!roster.length) return '<p class="muted">' + note + '</p>';
+    var cards = roster.map(function (p) {
+      var tag = p.isLegend ? '<span class="tag tag--legend">Legend</span>' : (p.isHOF ? '<span class="tag tag--hof">HOF</span>' : '');
+      return '<a class="role-card" href="#/player/' + p.id + '">' + image.avatarHtml(p, "sm") +
+        '<span class="role-card__body"><span class="role-card__name">' + util.esc(p.name) + tag + '</span>' +
+        '<span class="role-card__line muted">' + util.esc(p.positions || '') + '</span></span></a>';
+    }).join("");
+    return '<p class="muted">' + note + '</p><div class="role-cards">' + cards + '</div>';
+  }
+
+  function rosterSectionHtml(team, year) {
+    var roster = rosterFromData(team, year);
+    if (!roster) return fallbackRosterHtml(team, year);
+    var g = classifyRoster(roster);
+    var keyBadge = function (e) { return (e.exp !== null && e.exp <= 2) ? '<span class="tag tag--rookie">Rising</span>' : ''; };
+    var growthBadge = function (e) { return e.exp === 0 ? '<span class="tag tag--rookie">Rookie</span>' : '<span class="tag tag--active">Yr ' + (e.exp + 1) + '</span>'; };
+    return roleGroup("\u2B50 Key players", "stars & main starters", g.key, keyBadge) +
+      roleGroup("Supporting cast", "rotation & role players", g.support, null) +
+      roleGroup("\uD83C\uDF31 Young & growth", "developing for the future", g.growth, growthBadge) +
+      (g.depth.length ? roleGroup("Depth", "limited minutes", g.depth, null) : "");
   }
 
   function seasonRecordFor(team, year) {
@@ -37,7 +106,6 @@ window.NBA.views.team = (function () {
     var champs = util.champsThrough(team, year);
     var rec = seasonRecordFor(team, year);
     var result = resultForYear(team, year);
-    var roster = rosterFor(team, year);
 
     var resultHtml = result
       ? '<span class="badge ' + result.cls + '">' + result.label + '</span>'
@@ -46,20 +114,6 @@ window.NBA.views.team = (function () {
     var recordHtml = rec
       ? '<div class="stat"><span class="stat__num">' + rec.wins + '\u2013' + rec.losses + '</span><span class="stat__lbl">Record</span></div>'
       : '<div class="stat"><span class="stat__num">\u2014</span><span class="stat__lbl">Record (add via data/API)</span></div>';
-
-    var rosterHtml = roster.length
-      ? roster.map(function (p) {
-          var isRookie = p.draft && p.draft.year === year;
-          var tag = isRookie ? '<span class="tag tag--rookie">Rookie</span>'
-            : (p.isLegend ? '<span class="tag tag--legend">Legend</span>' : (p.isHOF ? '<span class="tag tag--hof">HOF</span>' : ''));
-          return '<a class="roster__item" href="#/player/' + p.id + '">' +
-            image.avatarHtml(p, "sm") +
-            '<span class="roster__name">' + util.esc(p.name) + '</span>' +
-            '<span class="roster__pos">' + util.esc(p.positions || '') + '</span>' + tag +
-            '</a>';
-        }).join("")
-      : '<p class="muted">No notable players in the bundled index for ' + util.seasonLabel(year) + '. ' +
-        'Run the data generator or add an API key to see full rosters.</p>';
 
     return '' +
       '<div class="timeline__year">' +
@@ -70,8 +124,8 @@ window.NBA.views.team = (function () {
       '  <div class="stat"><span class="stat__num">' + champs + '</span><span class="stat__lbl">Titles through ' + year + '</span></div>' +
       '</div>' +
       (rec && rec.notes ? '<p class="timeline__notes">' + util.esc(rec.notes) + (rec.coach ? ' \u00B7 Coach: ' + util.esc(rec.coach) : '') + '</p>' : '') +
-      '<h4 class="timeline__rosterTitle">Notable players</h4>' +
-      '<div class="roster">' + rosterHtml + '</div>';
+      '<h4 class="timeline__rosterTitle">Who mattered this season</h4>' +
+      '<div class="roster-roles">' + rosterSectionHtml(team, year) + '</div>';
   }
 
   function render(id, yearParam) {
@@ -105,6 +159,8 @@ window.NBA.views.team = (function () {
       '    </div>' +
       '  </div>' +
       '</section>' +
+
+      NBA.app.connectBanner("team") +
 
       '<section class="section">' +
       '  <div class="section__head">' +
