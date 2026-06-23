@@ -373,3 +373,25 @@ a { color: inherit; text-decoration: none; }
   .connect-banner { flex-direction: column; align-items: flex-start; }
   .connect-banner .btn { width: 100%; justify-content: center; }
 }
+
+/* ===== Games & projections ===== */
+.page-title { font-size: 26px; margin: 0 0 6px; }
+.games-list { display: flex; flex-direction: column; gap: 14px; }
+.game-card { padding: 16px 18px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+.game-card__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.game-card__matchup { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; flex-wrap: wrap; }
+.game-card__at { color: var(--muted); font-weight: 500; }
+.game-card__date { color: var(--muted); font-size: 13px; }
+.game-card__btn { margin-top: 12px; }
+.game-card__proj:not(:empty) { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px; }
+.proj__pick { margin: 0 0 12px; font-size: 15px; }
+.proj__pick strong { color: var(--accent); }
+.proj__team { margin-bottom: 16px; }
+.proj__title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 8px; font-size: 15px; }
+.proj__score { color: var(--accent-2); font-weight: 800; }
+.proj__name a { color: var(--text); font-weight: 600; }
+.proj__method { font-size: 12px; margin-top: 8px; }
+
+@media (max-width: 760px) {
+  .game-card__btn { width: 100%; }
+}

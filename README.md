@@ -72,6 +72,8 @@ For the richest experience, connect the free **balldontlie** API right inside th
 
 Once connected, every **player profile** gains a *Season explorer*: pick any season to see full season averages **and a game-by-game breakdown** (PTS, REB, AST, STL, BLK, TOV, shooting splits, opponent, W/L), plus a relevance/role summary. The key is stored only in your browser (`localStorage`); the free tier is rate-limited, so data loads one season at a time.
 
+The **Games** page lists upcoming matchups and, on demand, projects a full **player-level box score** for both rosters — projected MIN, PTS, REB, AST, STL, BLK, TOV and 3PM per player, plus a projected team total and edge. Projections use each player's season averages (falling back to the prior season for players without data yet) with a small home-court adjustment; the methodology is shown beneath each projection.
+
 Prefer a config file? Create `js/config.js` with `window.NBA_CONFIG = { balldontlieKey: "YOUR_FREE_KEY" };` and add `<script src="js/config.js"></script>` before the other scripts in `index.html`.
 
 ### Team rosters & roles by season
@@ -103,14 +105,16 @@ js/
   store.js            # localStorage (favorite, API key) + session cache
   util.js             # helpers (champ counts, formatting, contrast)
   image.js            # headshot URLs + initials fallback
-  api.js              # local stats loader + balldontlie wrapper
-  views/              # home, teams, team, players, player, compare
+  api.js              # local stats loader + balldontlie wrapper (games, rosters, season avgs)
+  views/              # home, teams, team, players, player, games, compare
 data/                 # bundled datasets (+ generated players/)
   teams.js, seasons.js, meta.js
+  team-seasons.js     # franchise -> season -> roster (generated, for role groups)
   player-index.js     # full player index (generated)
   curated.js          # curated overlay merged at startup
   players/{id}.json   # generated per-season stats
-tools/generate-players.py
+tools/generate-players.py        # downloads per-player season stats
+tools/build-team-seasons.py      # builds data/team-seasons.js from those stats
 ```
 
 ## Notes

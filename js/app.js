@@ -43,6 +43,7 @@ window.NBA.app = (function () {
       '    <a href="#/" data-nav="/">Home</a>' +
       '    <a href="#/teams" data-nav="/teams">Teams</a>' +
       '    <a href="#/players" data-nav="/players">Players</a>' +
+      '    <a href="#/games" data-nav="/games">Games</a>' +
       '    <a href="#/compare" data-nav="/compare">Compare</a>' +
       '  </nav>' +
       '  <div class="topbar__right">' + favHtml +
@@ -160,6 +161,7 @@ window.NBA.app = (function () {
     router.on("/team/:id/:year?", function (p) { render(views.team.render(p.id, p.year)); views.team.afterRender && views.team.afterRender(); });
     router.on("/players", function () { render(views.players.render()); views.players.afterRender && views.players.afterRender(); });
     router.on("/player/:id", function (p) { render(views.player.render(p.id)); views.player.afterRender && views.player.afterRender(p.id); });
+    router.on("/games", function () { render(views.games.render()); views.games.afterRender && views.games.afterRender(); });
     router.on("/compare", function () { render(views.compare.render()); views.compare.afterRender && views.compare.afterRender(); });
     router.setNotFound(function () { render('<section class="empty"><h2>Page not found</h2><p><a href="#/">Go home</a></p></section>'); });
   }

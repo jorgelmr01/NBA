@@ -144,6 +144,73 @@ window.NBA.api = (function () {
     });
   }
 
+  // ---- games & projections --------------------------------------------
+  function ymd(d) {
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+
+  // Games between two Date objects (inclusive). Returns [] on failure.
+  function gamesBetween(start, end) {
+    var url = "/games?start_date=" + ymd(start) + "&end_date=" + ymd(end) + "&per_page=100";
+    return bdlFetch(url).then(function (r) { return (r.ok && r.data && r.data.data) ? r.data.data : []; });
+  }
+
+  // Upcoming (not-yet-final) games within the next `days` days. If none are
+  // scheduled in that window, widens the search progressively.
+  function upcomingGames(days) {
+    var now = new Date();
+    function tryWindow(d) {
+      var end = new Date(now.getTime() + d * 86400000);
+      return gamesBetween(now, end).then(function (games) {
+        var pending = games.filter(function (g) { return (g.status || "").toLowerCase() !== "final"; });
+        if (pending.length || d >= 120) {
+          pending.sort(function (a, b) { return new Date(a.date) - new Date(b.date); });
+          return pending;
+        }
+        return tryWindow(d * 2);
+      });
+    }
+    return tryWindow(days || 7);
+  }
+
+  // Active roster (current players) for a balldontlie team id. Cached per team.
+  function teamRoster(bdlTeamId) {
+    var ck = "roster-" + bdlTeamId;
+    var cached = store.cacheGet(ck);
+    if (cached !== undefined) return Promise.resolve(cached);
+    return bdlFetch("/players?team_ids[]=" + bdlTeamId + "&per_page=100").then(function (r) {
+      var list = (r.ok && r.data && r.data.data) ? r.data.data : [];
+      store.cacheSet(ck, list);
+      return list;
+    });
+  }
+
+  // Season averages for many players in one (chunked) call. Returns id->avg map.
+  function seasonAveragesMulti(playerIds, bdlSeason) {
+    var ids = (playerIds || []).slice();
+    var map = {};
+    function chunk() {
+      if (!ids.length) return Promise.resolve(map);
+      var batch = ids.splice(0, 25);
+      var q = batch.map(function (id) { return "player_ids[]=" + id; }).join("&");
+      return bdlFetch("/season_averages?season=" + bdlSeason + "&" + q).then(function (r) {
+        var data = (r.ok && r.data && r.data.data) ? r.data.data : [];
+        data.forEach(function (a) { if (a && a.player_id != null) map[a.player_id] = a; });
+        return chunk();
+      });
+    }
+    return chunk();
+  }
+
+  // Recent game log (most recent `n` games this season) for one player.
+  function recentForm(bdlPlayerId, bdlSeason, n) {
+    return gameLog(bdlPlayerId, bdlSeason).then(function (res) {
+      if (!res || res.error || !res.games) return [];
+      var games = res.games.slice().sort(function (a, b) { return new Date(b.game.date) - new Date(a.game.date); });
+      return games.slice(0, n || 10);
+    });
+  }
+
   return {
     loadLocalPlayerStats: loadLocalPlayerStats,
     hasLiveApi: hasLiveApi,
@@ -153,6 +220,11 @@ window.NBA.api = (function () {
     seasonAverages: seasonAverages,
     gameLog: gameLog,
     getBdlTeams: getBdlTeams,
-    loadPlayerSeason: loadPlayerSeason
+    loadPlayerSeason: loadPlayerSeason,
+    gamesBetween: gamesBetween,
+    upcomingGames: upcomingGames,
+    teamRoster: teamRoster,
+    seasonAveragesMulti: seasonAveragesMulti,
+    recentForm: recentForm
   };
 })();
