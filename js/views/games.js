@@ -1,103 +1,85 @@
 // Upcoming games + player-level projections. Attaches to NBA.views.games.
 //
-// Projections are transparent: a player's baseline is their season average
-// (this season, or last season if this one hasn't started), nudged slightly
-// for home-court, and optionally blended with their recent-form (last games).
+// Projections run through the NBA.projection multi-factor model: a season-
+// average baseline adjusted for home court, venue altitude, opponent defense,
+// game pace, rest (back-to-backs) and injuries (OUT players are removed and
+// their minutes/usage redistributed to available teammates). Every adjustment
+// is shown to the user so the projection is fully explainable.
 window.NBA = window.NBA || {};
 window.NBA.views = window.NBA.views || {};
 
 window.NBA.views.games = (function () {
   var util = NBA.util;
   var api = NBA.api;
+  var P = NBA.projection;
 
   var state = { games: [], cache: {} };
 
-  // ---- projection math --------------------------------------------------
-  // Convert a balldontlie season_averages object into a clean stat line.
-  function lineFromAvg(a) {
-    if (!a) return null;
-    return {
-      min: Number(a.min) || 0, pts: Number(a.pts) || 0, reb: Number(a.reb) || 0,
-      ast: Number(a.ast) || 0, stl: Number(a.stl) || 0, blk: Number(a.blk) || 0,
-      tov: Number(a.turnover) || 0, fg3m: Number(a.fg3m) || 0, gp: Number(a.games_played) || 0
-    };
-  }
-
-  // Average a set of game-log rows into a stat line.
-  function lineFromGames(games) {
-    if (!games || !games.length) return null;
-    var s = { min: 0, pts: 0, reb: 0, ast: 0, stl: 0, blk: 0, tov: 0, fg3m: 0 };
-    games.forEach(function (g) {
-      s.min += parseMin(g.min); s.pts += g.pts || 0; s.reb += g.reb || 0; s.ast += g.ast || 0;
-      s.stl += g.stl || 0; s.blk += g.blk || 0; s.tov += g.turnover || 0; s.fg3m += g.fg3m || 0;
-    });
-    var n = games.length;
-    Object.keys(s).forEach(function (k) { s[k] = s[k] / n; });
-    s.gp = n;
-    return s;
-  }
-
-  function parseMin(m) {
-    if (m == null) return 0;
-    if (typeof m === "number") return m;
-    var p = String(m).split(":");
-    return Number(p[0]) + (Number(p[1]) || 0) / 60;
-  }
-
-  // Blend a season-average baseline with recent form, with a home/away nudge.
-  function project(baseline, recent, isHome) {
-    if (!baseline) return null;
-    var w = recent ? 0.4 : 0; // recent-form weight when available
-    function mix(k) { return baseline[k] * (1 - w) + (recent ? recent[k] * w : 0); }
-    var scoring = isHome ? 1.02 : 0.99; // modest home-court effect on output
-    return {
-      min: mix("min"),
-      pts: mix("pts") * scoring,
-      reb: mix("reb"),
-      ast: mix("ast") * scoring,
-      stl: mix("stl"),
-      blk: mix("blk"),
-      tov: mix("tov"),
-      fg3m: mix("fg3m") * scoring,
-      gp: baseline.gp
-    };
-  }
-
   // ---- data orchestration ----------------------------------------------
-  // Build projected lines for both teams of a game. Returns a Promise of
-  // { home:{team,lines}, visitor:{team,lines}, season }.
+  // Build a full multi-factor projection for a game. Pulls rosters + season
+  // averages (required) and team game logs + injuries (best-effort context),
+  // then runs the NBA.projection model. Resolves to a structured result.
   function buildProjection(game) {
     var season = game.season; // balldontlie season start year
-    var homeId = game.home_team.id, visId = game.visitor_team.id;
+    var homeT = game.home_team, visT = game.visitor_team;
+    var gameDate = new Date(game.datetime || game.date);
 
-    return Promise.all([api.teamRoster(homeId), api.teamRoster(visId)]).then(function (rosters) {
+    return Promise.all([api.teamRoster(homeT.id), api.teamRoster(visT.id)]).then(function (rosters) {
       var home = rosters[0], visitor = rosters[1];
       var ids = home.concat(visitor).map(function (p) { return p.id; });
       return api.seasonAveragesMulti(ids, season).then(function (avgMap) {
-        // Fall back to previous season for players with no data yet.
         var missing = ids.filter(function (id) { return !avgMap[id]; });
-        var fallback = missing.length
-          ? api.seasonAveragesMulti(missing, season - 1)
-          : Promise.resolve({});
-        return fallback.then(function (prevMap) {
-          function linesFor(roster, isHome) {
-            return roster.map(function (p) {
-              var avg = avgMap[p.id] || prevMap[p.id];
-              var baseline = lineFromAvg(avg);
-              if (!baseline || baseline.min < 8) return null; // skip deep bench
-              var proj = project(baseline, null, isHome);
-              return {
-                id: p.id, name: p.first_name + " " + p.last_name,
-                pos: p.position || "", proj: proj,
-                fromPrev: !avgMap[p.id]
+        var fb = missing.length ? api.seasonAveragesMulti(missing, season - 1) : Promise.resolve({});
+        return fb.then(function (prevMap) {
+          // Context signals — degrade gracefully if rate-limited/unavailable.
+          return Promise.all([
+            api.teamSeasonGames(homeT.id, season).catch(function () { return []; }),
+            api.teamSeasonGames(visT.id, season).catch(function () { return []; }),
+            api.playerInjuries([homeT.id, visT.id]).catch(function () { return null; })
+          ]).then(function (extra) {
+            var homeSum = P.summarizeGames(extra[0], homeT.id, gameDate);
+            var visSum = P.summarizeGames(extra[1], visT.id, gameDate);
+            var league = P.leagueAverages([homeSum, visSum]);
+            var injuries = extra[2];
+            var injByPlayer = {};
+            (Array.isArray(injuries) ? injuries : []).forEach(function (inj) {
+              var pid = inj.player && inj.player.id;
+              if (pid != null) injByPlayer[pid] = {
+                status: inj.status, sev: P.injurySeverity(inj.status),
+                desc: inj.description || inj.return_date || ""
               };
-            }).filter(Boolean).sort(function (a, b) { return b.proj.min - a.proj.min; }).slice(0, 10);
-          }
-          return {
-            season: season,
-            home: { team: game.home_team, lines: linesFor(home, true) },
-            visitor: { team: game.visitor_team, lines: linesFor(visitor, false) }
-          };
+            });
+
+            function buildSide(roster, isHome, ownSum, oppSum, teamObj) {
+              var ctx = P.teamContext({
+                isHome: isHome, venueAbbr: homeT.abbreviation,
+                ownSummary: ownSum, oppSummary: oppSum, league: league, gameDate: gameDate
+              });
+              var lines = [], outLines = [], out = [];
+              roster.forEach(function (p) {
+                var base = P.lineFromAvg(avgMap[p.id] || prevMap[p.id]);
+                if (!base || base.min < 8) return; // skip deep bench / no data
+                var entry = {
+                  id: p.id, name: p.first_name + " " + p.last_name, pos: p.position || "",
+                  proj: P.applyContext(base, ctx), fromPrev: !avgMap[p.id],
+                  injury: injByPlayer[p.id] || null
+                };
+                if (entry.injury && entry.injury.sev === "out") { out.push(entry); outLines.push(entry); }
+                else lines.push(entry);
+              });
+              lines.sort(function (a, b) { return b.proj.min - a.proj.min; });
+              P.redistributeInjuries(lines, outLines);
+              lines = lines.slice(0, 10);
+              return { team: teamObj, lines: lines, out: out, factors: ctx.factors };
+            }
+
+            return {
+              season: season,
+              home: buildSide(home, true, homeSum, visSum, homeT),
+              visitor: buildSide(visitor, false, visSum, homeSum, visT),
+              injuryAvailable: injuries !== null
+            };
+          });
         });
       });
     });
@@ -127,12 +109,38 @@ window.NBA.views.games = (function () {
       '</div>';
   }
 
+  function fmtPct(pct) {
+    return (pct >= 0 ? "+" : "") + (pct * 100).toFixed(1) + "%";
+  }
+
+  function chips(factors) {
+    if (!factors || !factors.length) return "";
+    return '<div class="proj__factors">' + factors.map(function (f) {
+      var cls = f.pct >= 0 ? "chip chip--up" : "chip chip--down";
+      return '<span class="' + cls + '">' + util.esc(f.label) + ' ' + fmtPct(f.pct) + '</span>';
+    }).join("") + '</div>';
+  }
+
+  function injuryNote(side) {
+    if (!side.out || !side.out.length) return "";
+    var names = side.out.map(function (o) {
+      return '<span class="inj-out">' + util.esc(o.name) + ' <em>(' + util.esc(o.injury.status || "Out") + ')</em></span>';
+    }).join("");
+    return '<p class="proj__injuries">\uD83E\uDE79 Out: ' + names + ' \u2014 minutes & usage redistributed.</p>';
+  }
+
+  function teamTotal(side) {
+    return side.lines.reduce(function (s, l) { return s + l.proj.pts; }, 0);
+  }
+
   function projTable(side) {
     var rows = side.lines.map(function (l) {
       var p = l.proj;
-      return '<tr>' +
-        '<td class="proj__name"><a href="#/player/' + l.id + '">' + util.esc(l.name) + '</a>' +
-        (l.fromPrev ? ' <span class="tag">prev yr</span>' : '') + '</td>' +
+      var tags = (l.fromPrev ? ' <span class="tag">prev yr</span>' : '') +
+        (l.boosted ? ' <span class="tag tag--rookie">usage \u2191</span>' : '') +
+        (l.injury && l.injury.sev === "questionable" ? ' <span class="tag tag--q">GTD</span>' : '');
+      return '<tr' + (l.boosted ? ' class="is-boosted"' : '') + '>' +
+        '<td class="proj__name"><a href="#/player/' + l.id + '">' + util.esc(l.name) + '</a>' + tags + '</td>' +
         '<td>' + util.num(p.min, 1) + '</td>' +
         '<td><strong>' + util.num(p.pts, 1) + '</strong></td>' +
         '<td>' + util.num(p.reb, 1) + '</td>' +
@@ -143,11 +151,11 @@ window.NBA.views.games = (function () {
         '<td>' + util.num(p.fg3m, 1) + '</td>' +
         '</tr>';
     }).join("");
-    var total = side.lines.reduce(function (sum, l) { return sum + l.proj.pts; }, 0);
     var head = '<tr><th>Player</th><th>MIN</th><th>PTS</th><th>REB</th><th>AST</th><th>STL</th><th>BLK</th><th>TOV</th><th>3PM</th></tr>';
     return '<div class="proj__team">' +
       '<h4 class="proj__title">' + util.esc(side.team.full_name) +
-      ' <span class="proj__score">~' + Math.round(total) + ' pts</span></h4>' +
+      ' <span class="proj__score">~' + Math.round(teamTotal(side)) + ' pts</span></h4>' +
+      chips(side.factors) + injuryNote(side) +
       '<div class="table-wrap"><table class="stats-table"><thead>' + head + '</thead><tbody>' + rows + '</tbody></table></div>' +
       '</div>';
   }
@@ -159,16 +167,27 @@ window.NBA.views.games = (function () {
       host.innerHTML = '<p class="muted">No projection data available for this matchup (rosters or season averages missing).</p>';
       return;
     }
-    var winner = null;
-    var hp = data.home.lines.reduce(function (s, l) { return s + l.proj.pts; }, 0);
-    var vp = data.visitor.lines.reduce(function (s, l) { return s + l.proj.pts; }, 0);
-    if (hp || vp) winner = hp >= vp ? data.home.team.full_name : data.visitor.team.full_name;
+    var hp = teamTotal(data.home), vp = teamTotal(data.visitor);
+    var pick = hp >= vp
+      ? { name: data.home.team.full_name, hi: hp, lo: vp }
+      : { name: data.visitor.team.full_name, hi: vp, lo: hp };
+    var margin = (pick.hi - pick.lo);
+    var conf = margin >= 8 ? "strong" : margin >= 3 ? "lean" : "toss-up";
+    var injNote = data.injuryAvailable
+      ? ""
+      : '<span> Injury feed unavailable on this API plan, so OUT players aren\u2019t auto-removed.</span>';
+
     host.innerHTML =
-      (winner ? '<p class="proj__pick">Projected edge: <strong>' + util.esc(winner) + '</strong> (' +
-        Math.round(Math.max(hp, vp)) + '\u2013' + Math.round(Math.min(hp, vp)) + ')</p>' : '') +
+      '<div class="proj__verdict">' +
+      '  <span class="proj__pick">Projected winner: <strong>' + util.esc(pick.name) + '</strong></span>' +
+      '  <span class="proj__line">' + Math.round(pick.hi) + '\u2013' + Math.round(pick.lo) +
+      ' &middot; ' + conf + ' (' + (margin >= 0 ? "+" : "") + margin.toFixed(0) + ')</span>' +
+      '</div>' +
       projTable(data.visitor) + projTable(data.home) +
-      '<p class="muted proj__method">Baseline = ' + (data.season + 1) + ' season averages (falls back to prior year for players ' +
-      'without data yet), with a small home-court adjustment. Open a player for their full game-by-game log.</p>';
+      '<p class="muted proj__method"><strong>Model:</strong> ' + (data.season + 1) + ' season averages adjusted for ' +
+      'home court, venue altitude, opponent defense, pace, rest (back-to-backs) and injuries (OUT players removed, ' +
+      'their minutes & production redistributed to available teammates). Percentages on each chip show that factor\u2019s ' +
+      'effect on output.' + injNote + '</p>';
   }
 
   function onProjectClick(gameId, btn) {
@@ -181,7 +200,8 @@ window.NBA.views.games = (function () {
     var game = state.games.find(function (g) { return String(g.id) === String(gameId); });
     if (!game) return;
     btn.disabled = true; btn.textContent = "Projecting\u2026";
-    host.innerHTML = '<p class="muted">Crunching season averages for both rosters\u2026</p>';
+    host.innerHTML = '<p class="muted">Running the model \u2014 rosters, opponent defense, pace, rest and injuries\u2026 ' +
+      '<span class="muted">(several API calls; the free tier is rate-limited, so this can take a few seconds).</span></p>';
     buildProjection(game).then(function (data) {
       state.cache[gameId] = data;
       btn.disabled = false; btn.textContent = "Hide projection";
@@ -197,7 +217,8 @@ window.NBA.views.games = (function () {
       '<section class="section">' +
       '  <h1 class="page-title">Upcoming games & projections</h1>' +
       '  <p class="muted">Player-level projections \u2014 points, rebounds, assists, steals, blocks, turnovers and threes \u2014 ' +
-      '  built from each player\u2019s season stats.</p>' +
+      '  from a model that weighs <strong>home court, altitude, opponent defense, pace, rest and injuries</strong>. ' +
+      '  Every adjustment is shown so you can see exactly why each line moves.</p>' +
       NBA.app.connectBanner("games") +
       '  <div id="gamesHost"><p class="muted">Loading\u2026</p></div>' +
       '</section>';

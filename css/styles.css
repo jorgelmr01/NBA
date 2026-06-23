@@ -390,8 +390,32 @@ a { color: inherit; text-decoration: none; }
 .proj__title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 8px; font-size: 15px; }
 .proj__score { color: var(--accent-2); font-weight: 800; }
 .proj__name a { color: var(--text); font-weight: 600; }
-.proj__method { font-size: 12px; margin-top: 8px; }
+.proj__method { font-size: 12px; margin-top: 8px; line-height: 1.5; }
+
+/* Verdict banner */
+.proj__verdict {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 12px 14px; margin-bottom: 14px; border-radius: 12px;
+  background: linear-gradient(135deg, rgba(56,189,248,.14), rgba(249,115,22,.10)); border: 1px solid var(--border);
+}
+.proj__verdict .proj__pick { font-size: 15px; }
+.proj__verdict .proj__pick strong { color: var(--accent); }
+.proj__line { color: var(--muted); font-weight: 700; font-size: 14px; }
+
+/* Factor chips */
+.proj__factors { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.chip { font-size: 11px; font-weight: 700; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+.chip--up { background: rgba(34,197,94,.12); color: #6ee7b7; }
+.chip--down { background: rgba(248,113,113,.12); color: #fca5a5; }
+
+/* Injuries */
+.proj__injuries { font-size: 13px; margin: 0 0 10px; color: var(--text); }
+.inj-out { display: inline-block; margin-right: 8px; }
+.inj-out em { color: var(--muted); font-style: normal; }
+.tag--q { background: #78350f; color: #fed7aa; }
+.stats-table tr.is-boosted td { background: rgba(34,197,94,.06); }
 
 @media (max-width: 760px) {
   .game-card__btn { width: 100%; }
+  .proj__verdict { flex-direction: column; align-items: flex-start; }
 }

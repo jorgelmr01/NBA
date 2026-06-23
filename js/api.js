@@ -211,6 +211,36 @@ window.NBA.api = (function () {
     });
   }
 
+  // All of a team's games in a season (for defense / pace / rest signals).
+  // Cached per team+season. Returns an array of game objects (may be empty).
+  function teamSeasonGames(bdlTeamId, bdlSeason) {
+    var ck = "teamgames-" + bdlTeamId + "-" + bdlSeason;
+    var cached = store.cacheGet(ck);
+    if (cached !== undefined) return Promise.resolve(cached);
+    return bdlFetch("/games?seasons[]=" + bdlSeason + "&team_ids[]=" + bdlTeamId + "&per_page=100").then(function (r) {
+      var list = (r.ok && r.data && r.data.data) ? r.data.data : [];
+      store.cacheSet(ck, list);
+      return list;
+    });
+  }
+
+  // Current player injuries for one or more teams. Returns an array of injury
+  // records ({ player, status, return_date, description }) or null if the
+  // endpoint is unavailable on the current plan (so callers can note that).
+  function playerInjuries(bdlTeamIds) {
+    var ids = (bdlTeamIds || []).slice();
+    if (!ids.length) return Promise.resolve([]);
+    var q = ids.map(function (id) { return "team_ids[]=" + id; }).join("&");
+    var ck = "injuries-" + ids.join("_");
+    var cached = store.cacheGet(ck);
+    if (cached !== undefined) return Promise.resolve(cached);
+    return bdlFetch("/player_injuries?" + q + "&per_page=100").then(function (r) {
+      var val = (r.ok && r.data && r.data.data) ? r.data.data : (r.ok ? [] : null);
+      store.cacheSet(ck, val);
+      return val;
+    });
+  }
+
   return {
     loadLocalPlayerStats: loadLocalPlayerStats,
     hasLiveApi: hasLiveApi,
@@ -225,6 +255,8 @@ window.NBA.api = (function () {
     upcomingGames: upcomingGames,
     teamRoster: teamRoster,
     seasonAveragesMulti: seasonAveragesMulti,
-    recentForm: recentForm
+    recentForm: recentForm,
+    teamSeasonGames: teamSeasonGames,
+    playerInjuries: playerInjuries
   };
 })();
